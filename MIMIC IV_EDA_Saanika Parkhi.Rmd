@@ -64,7 +64,7 @@ The data tables were downloaded from the Kaggle website: <https://www.kaggle.com
 
 -   Lastly, `icustays.csv`: This table contains information on ICU-specific admissions, including the first and last care units and the length of stay in the ICU. This is useful for looking at more intensive and critical care patterns which I was interested in analyzing, and for comparing ICU vs. non-ICU patients. Additionally, this table can be linked using `subject_id` and `hadm_id`.
 
-```{r data import}
+```{r data import, results = FALSE}
 
 # Reading in the raw data files using "read.csv()"
 patients_raw <- read.csv("patients.csv")
@@ -101,6 +101,8 @@ icustays <- icustays_raw
 
 ```
 
+<br>
+
 ##### **3. Basic Data Skimming**
 
 Before transforming or linking tables, a basic data quality check is conducted to view the data types, number of rows, and look for any NA values. The `skim()` function from `skimr` is used for inspecting the data thoroughly. 
@@ -118,9 +120,9 @@ skim(admissions)   #number of rows = 275 (275 admissions)
                    #character type columns = 13; numeric type columns = 3
                    #n_missing = 0 and complete_rate = 1 for all columns, meaning no NA values
 
-skim(diagnoses_icd)  #number of rows = 4506 (4506 diagnoses)
-                     #character type columns = 1; numeric type columns = 4
-                     #complete_rate = 1 for all columns, meaning no NA values
+skim(diagnoses)  #number of rows = 4506 (4506 diagnoses)
+                 #character type columns = 1; numeric type columns = 4
+                 #complete_rate = 1 for all columns, meaning no NA values
 
 skim(diagnoses_ref)  #number of rows = 109775 (109775 reference diagnoses)
                      #character type columns = 2; numeric type columns = 1
