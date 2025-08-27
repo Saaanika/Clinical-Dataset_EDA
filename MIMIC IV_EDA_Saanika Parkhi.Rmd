@@ -1,0 +1,53 @@
+---
+title: "EDA: MIMIC-IV Clinical Database"
+author: "Saanika Parkhi"
+date: "2025-08-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+------------------------------------------------------------------------
+
+#### **Introduction**
+
+The **MIMIC-IV Clinical Dataset Demo v2.2** is a deidentified subset of intensive care electronic health records from the Beth Israel Deaconess Medical Center. Though limited to 100 patients, it preserves the full relational structure of MIMIC-IV, making it a practical resource for building analysis workflows and exploring the potential of real-world clinical data.
+
+This dataset contains rich, multi-dimensional clinical information spanning demographics, admissions, intensive care unit (ICU) stays, laboratory test results, vital signs, medications, procedures, and outcomes. Because of its relational design, it enables researchers to explore health data across multiple levels: patient-level demographics, hospitalization-level events, and ICU-level data.
+
+The objective of this project is to conduct a broad exploratory and inferential analysis, with the specific goals being: 
+
+- Perform univariate and multivariate analyses to characterize patient populations, hospitalizations, and outcomes.
+
+- Explore relationships across multiple variables (e.g., age, sex, comorbidities, lab values, and outcomes).
+
+- Formulate and test several clinically meaningful hypotheses, such as differences in length of stay across subgroups and associations between lab results and mortality
+
+- Evaluate data quality and completeness, while highlighting the challenges of working with real-world clinical data.
+
+- Visualize key patterns and associations through clear, reproducible plots and tables.
+
+By adopting this approach, the project seeks to demonstrate how EHR data can be harnessed for both descriptive and inferential insights, showcasing the potential of MIMIC-IV for broader research in critical care, health outcomes, and medical decision-making. The Google R Style guide will be used. 
+
+------------------------------------------------------------------------
+
+#### **Section One: Importing Data**
+
+<br>
+
+##### **1. Loading Relevant Modules**
+
+```{r modules, message=FALSE, warning=FALSE, results=FALSE}
+
+
+```
+
+<br>
+
+##### **2. Importing Data Tables**
+
+The data tables were downloaded from the Kaggle website: https://www.kaggle.com/datasets/montassarba/mimic-iv-clinical-database-demo-2-2/data. 
+
+
