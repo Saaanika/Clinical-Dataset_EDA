@@ -17,19 +17,19 @@ The **MIMIC-IV Clinical Dataset Demo v2.2** is a deidentified subset of intensiv
 
 This dataset contains rich, multi-dimensional clinical information spanning demographics, admissions, intensive care unit (ICU) stays, laboratory test results, vital signs, medications, procedures, and outcomes. Because of its relational design, it enables researchers to explore health data across multiple levels: patient-level demographics, hospitalization-level events, and ICU-level data.
 
-The objective of this project is to conduct a broad exploratory and inferential analysis, with the specific goals being: 
+The objective of this project is to conduct a broad exploratory and inferential analysis, with the specific goals being:
 
-- Perform univariate and multivariate analyses to characterize patient populations, hospitalizations, and outcomes.
+-   Perform univariate and multivariate analyses to characterize patient populations, hospitalizations, and outcomes.
 
-- Explore relationships across multiple variables (e.g., age, sex, comorbidities, lab values, and outcomes).
+-   Explore relationships across multiple variables (e.g., age, sex, icu stays, and outcomes).
 
-- Formulate and test several clinically meaningful hypotheses, such as differences in length of stay across subgroups and associations between lab results and mortality
+-   Formulate and test several clinically meaningful hypotheses, such as differences in length of stay across subgroups and associations between lab results and mortality
 
-- Evaluate data quality and completeness, while highlighting the challenges of working with real-world clinical data.
+-   Evaluate data quality and completeness, while highlighting the challenges of working with real-world clinical data.
 
-- Visualize key patterns and associations through clear, reproducible plots and tables.
+-   Visualize key patterns and associations through clear, reproducible plots and tables.
 
-By adopting this approach, the project seeks to demonstrate how EHR data can be harnessed for both descriptive and inferential insights, showcasing the potential of MIMIC-IV for broader research in critical care, health outcomes, and medical decision-making. The Google R Style guide will be used. 
+By adopting this approach, the project seeks to demonstrate how EHR data can be harnessed for both descriptive and inferential insights, showcasing the potential of MIMIC-IV for broader research in critical care, health outcomes, and medical decision-making. The Google R Style guide will be used.
 
 ------------------------------------------------------------------------
 
@@ -40,7 +40,7 @@ By adopting this approach, the project seeks to demonstrate how EHR data can be 
 ##### **1. Loading Relevant Modules**
 
 ```{r modules, message=FALSE, warning=FALSE, results=FALSE}
-
+(library(skimr))
 
 ```
 
@@ -48,6 +48,95 @@ By adopting this approach, the project seeks to demonstrate how EHR data can be 
 
 ##### **2. Importing Data Tables**
 
-The data tables were downloaded from the Kaggle website: https://www.kaggle.com/datasets/montassarba/mimic-iv-clinical-database-demo-2-2/data. 
+The data tables were downloaded from the Kaggle website: <https://www.kaggle.com/datasets/montassarba/mimic-iv-clinical-database-demo-2-2/data>. For this project, the following tables are selected for analysis from the MIMIC-IV dataset:
 
+-   `patients.csv`: This table contains unique patient identifiers like `subject_id` along with demographic information such as gender and age. This will allow for individual-level demographic analysis and grouping based on certain patient characteristics.
+
+- `omr.csv`: This table has information about each patient's weight, height, BMI and blood pressure (multiple entries per patient). Each patient is identified with a  `subject_id` and the time of measuring these characteristics is recorded as well.
+
+-   `admissions.csv`: This table includes details about each hospital admission, the `hadm_id`, allowing me to differentiate between multiple admissions for the same patient. It also contains important contextual variables such as admission type, discharge status (including whether the patient died), insurance type, race, and marital status. These will allow me to conduct demographic and outcome-based comparisons.
+
+-   `diagnoses_icd.csv`: This table included diagnostic information for each patient during their visit, containing the `subject_id` and `hadm_id`. This table only contains `icd_code` correspnding to a specific diagnosis. For finding the description/name of the diagnosis itself, the table `d_icd_diagnoses` was used.
+
+-   `pharmacy.csv`: This table includes information about the medications administered to each patient during their stay, thus containing both the `subject_id` and `hadm_id`. The start and stop times of the medication along with whether it expired, became inactive or was discontinued due to any reason is also included.
+
+-   `transfers.csv`: This table contains information about whether a person was discharged, admitted, transferred to another unit or was taken to the emergency department. It contains the unique identifier `transfer_id` to note any such event even for the same patient (`subject_id`) during the same admission (`hadm_id`).
+
+-   Lastly, `icustays.csv`: This table contains information on ICU-specific admissions, including the first and last care units and the length of stay in the ICU. This is useful for looking at more intensive and critical care patterns which I was interested in analyzing, and for comparing ICU vs. non-ICU patients. Additionally, this table can be linked using `subject_id` and `hadm_id`.
+
+```{r data import}
+
+# Reading in the raw data files using "read.csv()"
+patients_raw <- read.csv("patients.csv")
+omr_raw <- read.csv("omr.csv")
+admissions_raw <- read.csv("admissions.csv")
+diagnoses_icd_raw <- read.csv("diagnoses_icd.csv")
+diagnoses_reference_raw <- read.csv("d_icd_diagnoses.csv")
+pharmacy_raw <- read.csv("pharmacy.csv")
+transfers_raw <- read.csv("transfers.csv")
+icustays_raw <- read.csv("icustays.csv")
+
+
+# Viewing the top entries in all tables 
+head(patients_raw)
+head(omr_raw)
+head(admissions_raw)
+head(diagnoses_icd_raw)
+head(diagnoses_reference_raw)
+head(pharmacy_raw)
+head(transfers_raw)
+head(icustays_raw)           #all tables look fine
+```
+
+```{r working copy}
+# Making working copies to not overwrite the original data 
+patients <- patients_raw
+omr <- omr_raw
+admissions <- admissions_raw
+diagnoses <- diagnoses_icd_raw
+diagnoses_ref <- diagnoses_reference_raw
+pharmacy <- pharmacy_raw
+transfers <- transfers_raw
+icustays <- icustays_raw
+
+```
+
+##### **3. Basic Data Skimming**
+
+Before transforming or linking tables, a basic data quality check is conducted to view the data types, number of rows, and look for any NA values. The `skim()` function from `skimr` is used for inspecting the data thoroughly. 
+
+```{r skim, results = FALSE} 
+skim(patients) #number of rows = 100 (100 patients) 
+               #character type columns = 3; numeric type columns = 3 
+               #n_missing = 0 and complete_rate = 1 for all columns, meaning no NA values
+
+skim(omr)      #number of rows = 2964 (2964 entries) 
+               #character type columns = 3; numeric type columns = 2 
+               #n_missing = 0 and complete_rate = 1 for all columns, meaning no NA values
+
+skim(admissions)   #number of rows = 275 (275 admissions)
+                   #character type columns = 13; numeric type columns = 3
+                   #n_missing = 0 and complete_rate = 1 for all columns, meaning no NA values
+
+skim(diagnoses_icd)  #number of rows = 4506 (4506 diagnoses)
+                     #character type columns = 1; numeric type columns = 4
+                     #complete_rate = 1 for all columns, meaning no NA values
+
+skim(diagnoses_ref)  #number of rows = 109775 (109775 reference diagnoses)
+                     #character type columns = 2; numeric type columns = 1
+                     #complete_rate = 1 for all columns, meaning no NA values
+
+skim(pharmacy)    #number of rows = 15306 (15306 medications)
+                  #character type columns = 16; numeric type columns = 9; logical type = 2
+                  #8 columns have complete rate <1, with 2 of them (expirationdate and fill_quantity) having complete rate = 0 (all missing values); columns should be inspected and removed
+
+skim(transfers)   #number of rows = 1190 (1190 transfers)
+                  #character type columns = 4; numeric type columns = 3
+                  #the hadm_id column has 54 missing values (should be removed)
+
+skim(icustays)    #number of rows = 140 (140 icu stays)
+                  #character type columns = 4; numeric type columns = 4
+                  #complete_rate = 1 for all columns, meaning no NA values
+ 
+```
 
