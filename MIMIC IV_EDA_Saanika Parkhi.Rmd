@@ -85,8 +85,9 @@ head(diagnoses_icd_raw)
 head(diagnoses_reference_raw)
 head(pharmacy_raw)
 head(transfers_raw)
-head(icustays_raw)           #all tables look fine
+head(icustays_raw)           
 ```
+All tables are loaded properly in R, and top entries look fine.
 
 ```{r working copy}
 # Making working copies to not overwrite the original data 
@@ -108,6 +109,8 @@ icustays <- icustays_raw
 Before transforming or linking tables, a basic data quality check is conducted to view the data types, number of rows, and look for any NA values. The `skim()` function from `skimr` is used for inspecting the data thoroughly. 
 
 ```{r skim, results = FALSE} 
+
+# Skimming the datasets using the `skim()` function
 skim(patients) #number of rows = 100 (100 patients) 
                #character type columns = 3; numeric type columns = 3 
                #n_missing = 0 and complete_rate = 1 for all columns, meaning no NA values
@@ -130,7 +133,7 @@ skim(diagnoses_ref)  #number of rows = 109775 (109775 reference diagnoses)
 
 skim(pharmacy)    #number of rows = 15306 (15306 medications)
                   #character type columns = 16; numeric type columns = 9; logical type = 2
-                  #8 columns have complete rate <1, with 2 of them (expirationdate and fill_quantity) having complete rate = 0 (all missing values); columns should be inspected and removed
+                  #8 columns have complete rate <1, with 2 of them (expirationdate and fill_quantity) having complete rate = 0 (all missing values); do not include these columns when subsetting data for analysis
 
 skim(transfers)   #number of rows = 1190 (1190 transfers)
                   #character type columns = 4; numeric type columns = 3
@@ -141,4 +144,68 @@ skim(icustays)    #number of rows = 140 (140 icu stays)
                   #complete_rate = 1 for all columns, meaning no NA values
  
 ```
+*Note: Although some identifier columns like`subject_id` and `hadm_id` are stored as integers, they represent identifiers rather than numeric values. However, as their data types are consistent across the tables being joined, it is not necessary to convert them for the merging the tables. They will be converted later only if necessary.*
 
+<br>
+
+##### **5. Checking for Duplicates**
+
+Before linking the datasets, it is important to confirm that the primary key columns are all unique values. This will ensure that any analysis or joins behave as intended and do not unintentionally inflate the number of rows due to any duplicate keys.
+
+The following columns will be checked for duplicates:
+
+- `subject_id` in `patients`dataset: there should be only one row per patient 
+- `hadm_id` in `admissions` dataset: every patient admission should have a unique hospital admission number 
+- `icd_code`in `diagnoses_ref` dataset: each diagnosis should have a unique icd code associated with it
+- `transfer_id` in `transfers` dataset: each transfer event needs to have a unique id
+- `stay_id` in `icustays` dataset: each stay in the ICU needs to have a unique id 
+
+If duplicates are found where there should only be one record per ID, it may indicate data quality issues that need to be addressed before any sort of analysis.
+
+```{r duplicates}
+
+# Counting the number of duplicate ids above in each dataset to verify uniqueness
+
+patients$subject_id %>%    
+  duplicated() %>% 
+  sum()                       #checking if `subject_id` is unique in `patients`
+
+admissions$hadm_id %>%     
+  duplicated() %>%
+  sum()                       #checking if `hadm_id` is unique in `admissions`
+
+diagnoses_ref$icd_code %>%     
+  duplicated() %>% 
+  sum()                       #checking if `icd_code` is unique in `diagnoses_ref`
+
+transfers$transfer_id %>%     
+  duplicated() %>%
+  sum()                       #checking if `transfer_id` is unique in `transfers`
+
+icustays$stay_id %>%       
+  duplicated() %>% 
+  sum()                       #checking if `stay_id` is unique in `icustays`
+```
+As seen, all identifier values are unique in the datasets, except one: the `icd_code` in the `diagnoses_ref` has 493 duplicates and this dataset needs to be further inspected before joining with any other table.
+
+
+
+```{r diagnoses reference duplicate}
+
+
+# Filtering only the duplicated rows on `icd_code`, keeping the first and any later occurrences 
+duplicate_diagnoses <- diagnoses_ref[duplicated(diagnoses_ref$icd_code) | 
+                               duplicated(diagnoses_ref$icd_code, fromLast = T), ]
+
+# Ordering by `icd_code` to see duplicate entries together 
+head(duplicate_diagnoses[order(duplicate_diagnoses$icd_code), ])
+
+# Checking whether there are duplicates based on the composite key of both`icd_code` and `icd_version`
+sum(duplicated(diagnoses_ref[, c("icd_code", "icd_version")]))    #returns 0
+
+```
+Although the `icd_code` values appear more than once in the `diagnoses_ref` table, these are not true duplicates as all the duplicated codes differ based on the `icd_version` column. Therefore, the combination of `icd_code` and `icd_version` together can form a composite key that uniquely identifies each diagnosis reference entry.
+
+<br>
+
+##### **6. Data Linking**
