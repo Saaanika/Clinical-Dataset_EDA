@@ -33,7 +33,7 @@ By adopting this approach, the project seeks to demonstrate how EHR data can be 
 
 ------------------------------------------------------------------------
 
-#### **Section One: Importing Data**
+#### **Section One: Importing Data and Creating a Full Dataset**
 
 <br>
 
@@ -41,7 +41,8 @@ By adopting this approach, the project seeks to demonstrate how EHR data can be 
 
 ```{r modules, message=FALSE, warning=FALSE, results=FALSE}
 (library(skimr))
-
+(library(dplyr))
+(library(tidyr))
 ```
 
 <br>
@@ -60,8 +61,6 @@ The data tables were downloaded from the Kaggle website: <https://www.kaggle.com
 
 -   `pharmacy.csv`: This table includes information about the medications administered to each patient during their stay, thus containing both the `subject_id` and `hadm_id`. The start and stop times of the medication along with whether it expired, became inactive or was discontinued due to any reason is also included.
 
--   `transfers.csv`: This table contains information about whether a person was discharged, admitted, transferred to another unit or was taken to the emergency department. It contains the unique identifier `transfer_id` to note any such event even for the same patient (`subject_id`) during the same admission (`hadm_id`).
-
 -   Lastly, `icustays.csv`: This table contains information on ICU-specific admissions, including the first and last care units and the length of stay in the ICU. This is useful for looking at more intensive and critical care patterns which I was interested in analyzing, and for comparing ICU vs. non-ICU patients. Additionally, this table can be linked using `subject_id` and `hadm_id`.
 
 ```{r data import, results = FALSE}
@@ -73,18 +72,16 @@ admissions_raw <- read.csv("admissions.csv")
 diagnoses_icd_raw <- read.csv("diagnoses_icd.csv")
 diagnoses_reference_raw <- read.csv("d_icd_diagnoses.csv")
 pharmacy_raw <- read.csv("pharmacy.csv")
-transfers_raw <- read.csv("transfers.csv")
 icustays_raw <- read.csv("icustays.csv")
 
 
 # Viewing the top entries in all tables 
 head(patients_raw)
-head(omr_raw)
+head(omr_raw)          
 head(admissions_raw)
 head(diagnoses_icd_raw)
 head(diagnoses_reference_raw)
 head(pharmacy_raw)
-head(transfers_raw)
 head(icustays_raw)           
 ```
 All tables are loaded properly in R, and top entries look fine.
@@ -97,7 +94,6 @@ admissions <- admissions_raw
 diagnoses <- diagnoses_icd_raw
 diagnoses_ref <- diagnoses_reference_raw
 pharmacy <- pharmacy_raw
-transfers <- transfers_raw
 icustays <- icustays_raw
 
 ```
@@ -135,20 +131,29 @@ skim(pharmacy)    #number of rows = 15306 (15306 medications)
                   #character type columns = 16; numeric type columns = 9; logical type = 2
                   #8 columns have complete rate <1, with 2 of them (expirationdate and fill_quantity) having complete rate = 0 (all missing values); do not include these columns when subsetting data for analysis
 
-skim(transfers)   #number of rows = 1190 (1190 transfers)
-                  #character type columns = 4; numeric type columns = 3
-                  #the hadm_id column has 54 missing values (should be removed)
-
 skim(icustays)    #number of rows = 140 (140 icu stays)
                   #character type columns = 4; numeric type columns = 4
                   #complete_rate = 1 for all columns, meaning no NA values
- 
+
+
 ```
 *Note: Although some identifier columns like`subject_id` and `hadm_id` are stored as integers, they represent identifiers rather than numeric values. However, as their data types are consistent across the tables being joined, it is not necessary to convert them for the merging the tables. They will be converted later only if necessary.*
 
+The `pharmacy` dataset has columns with many missing values and repeated medications for the same patient during the same admission. The `select()` function from `dplyr` will be used to subset specific columns, while the `distinct()` function will be used to extract only unique values. 
+
+```{r subsetting pharmacy, results = FALSE} 
+
+pharmacy <- pharmacy %>%
+  select(subject_id, hadm_id, medication)  #keeping only relevant columns
+
+pharmacy <- pharmacy %>%
+  filter(medication != "") %>%       #there are a lot of empty strings for `medication`; filtering them out 
+  distinct(subject_id, hadm_id, medication, .keep_all = TRUE)    #keeping only distinct medications per patient per admission
+
+```
 <br>
 
-##### **5. Checking for Duplicates**
+##### **4. Checking for Duplicates**
 
 Before linking the datasets, it is important to confirm that the primary key columns are all unique values. This will ensure that any analysis or joins behave as intended and do not unintentionally inflate the number of rows due to any duplicate keys.
 
@@ -157,7 +162,6 @@ The following columns will be checked for duplicates:
 - `subject_id` in `patients`dataset: there should be only one row per patient 
 - `hadm_id` in `admissions` dataset: every patient admission should have a unique hospital admission number 
 - `icd_code`in `diagnoses_ref` dataset: each diagnosis should have a unique icd code associated with it
-- `transfer_id` in `transfers` dataset: each transfer event needs to have a unique id
 - `stay_id` in `icustays` dataset: each stay in the ICU needs to have a unique id 
 
 If duplicates are found where there should only be one record per ID, it may indicate data quality issues that need to be addressed before any sort of analysis.
@@ -178,17 +182,11 @@ diagnoses_ref$icd_code %>%
   duplicated() %>% 
   sum()                       #checking if `icd_code` is unique in `diagnoses_ref`
 
-transfers$transfer_id %>%     
-  duplicated() %>%
-  sum()                       #checking if `transfer_id` is unique in `transfers`
-
 icustays$stay_id %>%       
   duplicated() %>% 
   sum()                       #checking if `stay_id` is unique in `icustays`
 ```
 As seen, all identifier values are unique in the datasets, except one: the `icd_code` in the `diagnoses_ref` has 493 duplicates and this dataset needs to be further inspected before joining with any other table.
-
-
 
 ```{r diagnoses reference duplicate}
 
@@ -206,6 +204,112 @@ sum(duplicated(diagnoses_ref[, c("icd_code", "icd_version")]))    #returns 0
 ```
 Although the `icd_code` values appear more than once in the `diagnoses_ref` table, these are not true duplicates as all the duplicated codes differ based on the `icd_version` column. Therefore, the combination of `icd_code` and `icd_version` together can form a composite key that uniquely identifies each diagnosis reference entry.
 
+Additionally, `omr` dataset has multiple entries for a single patient id for `Height`, `Weight` and `BMI`. To look at how patient demographics affect hospital stays and health outcomes, the decision was made to create aggregate columns so only one value is kept per patient.
+
+```{r aggregate omr}
+
+omr_wide <- omr %>%
+  filter(result_name %in% c("Height (Inches)", "Weight (Lbs)", "BMI (kg/m2)")) %>%      #choosing only the relevant values 
+  select(subject_id, result_name, result_value) %>%        
+  pivot_wider(                            #to keep only one entry per patient
+    names_from = result_name,
+    values_from = result_value,
+    values_fn = ~ mean(as.numeric(.x), na.rm = TRUE)     #to summarise the multiple entries; the average of the values is taken
+  )
+
+omr_wide     #some NA values are seen, but those will be kept for now
+
+```
 <br>
 
-##### **6. Data Linking**
+
+##### **5. Data Linking**
+
+The `diagnoses` and `diagnoses_ref` will first be joined to add the name of the diagnosis to the corresponding code, using both the `icd_code` and `icd_version` due to duplicated `icd_code` values. A `left_join()` is done to only keep the diagnoses for patients (not all diagnosis names).
+
+```{r data linking diag}
+
+diagnoses_full <- left_join(diagnoses, diagnoses_ref, by = c("icd_code", "icd_version"))
+diagnoses_full     #there are multiple diagnoses for each patient even for a single hospital admission, `seq_num` gives pseudo-order for icd codes with 1 being most relevant diagnosis
+
+# Keeping only the primary diagnosis per patient per admission
+primary_diagnosis <- diagnoses_full %>%
+  filter(seq_num == 1)     #only most relevant diagnosis is taken 
+
+primary_diagnosis
+```
+
+First, the `omr` and `patients` datasets will be linked by `subject_id` to add information about height, weight and BMI to each patient. A `full_join()` is done to keep all entries.
+
+Next, the `admissions` dataset will be joined by `subject_id` to add demographic information to each hospital admission. As a single patient can have multiple admissions, the `left_join()` function is used to keep all the admissions.
+
+Then, the `primary_diagnosis` table will be joined on both `subject_id` and `hadm_id` to ensure accurate matching of the diagnostic information and admission information. A `full_join()` is done to keep all entries.
+
+Next, the `pharmacy` table will be joined on both `subject_id` and `hadm_id` to ensure accurate matching of the diagnostic information and admission information. A `left_join()` is done to keep all admissions and corresponding pharmacy data.
+
+Lastly, the resulting table will joined with the `icustays` table on both `subject_id` and `hadm_id` to ensure accurate matching of ICU stay data to the correct admission and patient. A `left_join()` is used to make sure all admissions are kept even if that admission did not involve an ICU stay.
+```{r data linking}
+
+omr_patients <- full_join(omr_wide, patients, by = "subject_id")    #joining `omr` and `patients`
+
+admissions_omr_patients <- left_join(admissions, omr_patients, by = "subject_id")    #joining `admissions` to previous table
+
+admissions_omr_patients_diagnoses <- full_join(primary_diagnosis, admissions_omr_patients, by = c("subject_id", "hadm_id"))       #joining `primary_diagnosis` to previous table
+
+admissions_omr_patients_diagnoses_pharmacy <- left_join(admissions_omr_patients_diagnoses, pharmacy, by = c("subject_id", "hadm_id"))   #joining `pharmacy` to previous table
+
+complete_data <- left_join(admissions_omr_patients_diagnoses_pharmacy, icustays, by = c("subject_id", "hadm_id"))   #joining `icustays` to previous table
+
+# Viewing the complete dataset
+View(complete_data)
+
+```
+
+----------------------------------------------------------------------------------------------------
+
+### **Section Two: Data Quality Checks**
+
+<br>
+
+
+##### **1. Overall Data Check**
+
+The `skim()` function is used here again as it provides a concise summary of each variable, including data type, number of missing values, and completeness rate. The data will also be inspected manually with the "View()" function to get an overall sense of what data quality checks need to be done.
+```{r skim2, results=FALSE}
+skim(complete_data)   #OMR data is missing for some entries and as expected, some ICU-related columns now contain NA values for admissions that did not involve an ICU stay
+                      #character type columns = 23; numeric type columns = 12
+
+View(complete_data)   #several character type columns have missing values represented in ways other than `NA`
+```
+*Finding: While many columns, especially those unrelated to ICU data, do not contain explicit `NA` values, missing data is still present in alternative forms. For example, the `race` column uses "UNKNOWN" or "UNABLE TO OBTAIN" to indicate missing values, the `language` column uses "?", and several other columns use empty strings. These need to be cleaned up to reflect missing values properly.*
+
+##### **2. Standardizing Missing Values**
+
+The dataset will be cleaned by standardizing how missing values are represented. Although some missing values are already coded as `NA`, others are represented using placeholders such as "UNKNOWN", "?", or empty strings "". These inconsistent representations can lead to incorrect summaries or misleading results during analysis if not handled properly. 
+
+First, a function called `clean_missing()` will be created to replace the different placeholder values with actual `NA` values for consistency and easier handling.
+
+```{r clean missing}
+
+clean_missing <- function(x) {
+  if (is.character(x)) {                                         #only character type columns were found to have these placeholder values
+    x[x %in% c("UNKNOWN", "?", "", "UNABLE TO OBTAIN")] <- NA    #the placeholder value is replaced with `NA`
+  }
+  return(x)                                                      #`NA` is returned if there was a placeholder value, otherwise the original value is returned
+}
+```
+
+The function `mutate()` from `dplyr` will be used to modify the columns. The `clean_missing()` function will then be applied to each and every column using `across(everything())` to clean all of the missing values and standardize them to `NA`. 
+
+```{r clean missing apply}
+
+complete_data <- complete_data %>%
+  mutate(across(everything(), clean_missing))
+
+View(complete_data)   #all missing or placeholder values are replaced with `NA`
+
+```
+
+<br>
+
+
