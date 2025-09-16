@@ -43,6 +43,7 @@ By adopting this approach, the project seeks to demonstrate how EHR data can be 
 (library(skimr))
 (library(dplyr))
 (library(tidyr))
+(library(ggplot2))
 ```
 
 <br>
@@ -204,7 +205,7 @@ sum(duplicated(diagnoses_ref[, c("icd_code", "icd_version")]))    #returns 0
 ```
 Although the `icd_code` values appear more than once in the `diagnoses_ref` table, these are not true duplicates as all the duplicated codes differ based on the `icd_version` column. Therefore, the combination of `icd_code` and `icd_version` together can form a composite key that uniquely identifies each diagnosis reference entry.
 
-Additionally, `omr` dataset has multiple entries for a single patient id for `Height`, `Weight` and `BMI`. To look at how patient demographics affect hospital stays and health outcomes, the decision was made to create aggregate columns so only one value is kept per patient.
+Additionally, `omr` dataset has multiple entries for a single patient id for `Height`, `Weight` and `BMI`. To look at how patient demographics affect hospital stays and health outcomes, the decision was made to create aggregate columns so only the average values are kept per patient.
 
 ```{r aggregate omr}
 
@@ -215,6 +216,11 @@ omr_wide <- omr %>%
     names_from = result_name,
     values_from = result_value,
     values_fn = ~ mean(as.numeric(.x), na.rm = TRUE)     #to summarise the multiple entries; the average of the values is taken
+  ) %>%
+  rename(
+    Height = `Height (Inches)`,
+    Weight = `Weight (Lbs)`,
+    BMI = `BMI (kg/m2)`
   )
 
 omr_wide     #some NA values are seen, but those will be kept for now
@@ -248,7 +254,7 @@ Then, the `primary_diagnosis` table will be joined on both `subject_id` and `had
 Next, the `pharmacy` table will be joined on both `subject_id` and `hadm_id` to ensure accurate matching of the diagnostic information and admission information. A `left_join()` is done to keep all admissions and corresponding pharmacy data.
 
 Lastly, the resulting table will joined with the `icustays` table on both `subject_id` and `hadm_id` to ensure accurate matching of ICU stay data to the correct admission and patient. A `left_join()` is used to make sure all admissions are kept even if that admission did not involve an ICU stay.
-```{r data linking}
+```{r data linking, warning = FALSE}
 
 omr_patients <- full_join(omr_wide, patients, by = "subject_id")    #joining `omr` and `patients`
 
@@ -283,6 +289,8 @@ View(complete_data)   #several character type columns have missing values repres
 ```
 *Finding: While many columns, especially those unrelated to ICU data, do not contain explicit `NA` values, missing data is still present in alternative forms. For example, the `race` column uses "UNKNOWN" or "UNABLE TO OBTAIN" to indicate missing values, the `language` column uses "?", and several other columns use empty strings. These need to be cleaned up to reflect missing values properly.*
 
+<br>
+
 ##### **2. Standardizing Missing Values**
 
 The dataset will be cleaned by standardizing how missing values are represented. Although some missing values are already coded as `NA`, others are represented using placeholders such as "UNKNOWN", "?", or empty strings "". These inconsistent representations can lead to incorrect summaries or misleading results during analysis if not handled properly. 
@@ -312,4 +320,145 @@ View(complete_data)   #all missing or placeholder values are replaced with `NA`
 
 <br>
 
+----------------------------------------------------------------------------------------------------
 
+### **Section Three: Exploring Patient Demographics and Distributions**
+
+To better understand trends across the patient population, distributions will be analyzed based on key demographic and health-related variables. I have chosen to include `age`, `gender`, `BMI`, and `race`. These factors can offer insights into patient outcomes, inequities, and hospital resource allocation. The function `ggplot()` from `ggplot2` will be used to construct the graphs. 
+
+First, a `patients_unique` dataset will be created to keep only one entry per patient for exploring patient characteristics. 
+
+```{r missing hadm_id, results = FALSE}
+
+table(complete_data$hadm_id, useNA = "ifany")   #confirming that no patients in the dataset are missing `hadm_id`; none do so all patients in `patients` table were admitted and that dataset can be used directly for EDA 
+
+patients_unique <- complete_data %>%
+  distinct(subject_id, .keep_all = TRUE)   #the argument keep_all is set to TRUE to keep all columns 
+
+```
+
+<br>
+
+
+##### **2. Patient Age Distribution**
+
+Age is a fundamental demographic variable that often correlates with multiple admissions, health outcomes, and hospital length of stay. Understanding the distribution of patient age can help identify whether the dataset reflects a particular population (e.g., elderly ICU patients or younger trauma patients). A histogram is used to plot the data as `age` is continuous (numerical) variable.
+
+```{r age distribution}
+ggplot(patients_unique, aes(x = anchor_age)) +
+  geom_histogram(binwidth = 5, fill = "darkgreen", color = "black") + 
+  labs(title = "Age Distribution of Patients", x = "Age", y = "Number of Patients")
+```
+The histogram shows that most patients in the dataset are older adults, with a noticeable concentration between ages 60 and 75. The distribution appears slightly right-skewed, with relatively fewer younger patients compared to older individuals.A few younger patients (<30 years old) are present, but they are underrepresented compared to the older population
+
+<br>
+
+
+##### **2. Patient Gender Distribution**
+
+Gender is a key demographic variable often associated with differences in treatment decisions and healthcare outcomes. Understanding the gender distribution provides insight into whether it reflects a balanced patient population or is skewed toward a particular sex. As `gender` is categorical, a bar chart is used to visualize the count of patients by gender.
+
+```{r gender distribution}
+
+ggplot(patients_unique, aes(x = gender)) +   
+  geom_bar(stat = "count", fill = "darkgreen", color = "black") +
+  labs(title = "Gender Distribution of Patients", x = "Gender", y = "Count")
+
+```
+The barplot shows that the dataset has a slightly higher number of male patients compared to female patients. However, the counts of both seem pretty balanced as both are close to 50. This indicates that the distribution is quite balanced.
+
+<br>
+
+##### **3. Patient BMI Distribution**
+
+BMI is a key indicator of patient health and can help categorize individuals as underweight, normal weight, overweight, or obese, which can have direct implications for predicting hospital length of stay or complication rates. `BMI` is a continuous variable and thus visualized here using a histogram.
+
+```{r bmi distribution}
+
+ggplot(patients_unique, aes(x = BMI)) +
+  geom_histogram(binwidth = 3, fill = "darkgreen") +
+  labs(title = "BMI Distribution", x = "BMI", y = "Density")
+
+```
+There seems to be some outliers that are greater than BMI of 600, which is an implausible value. The BMI values need to be explored further. 
+
+```{r BMI range fix}
+
+patients_unique %>%
+  arrange(desc(BMI))     #the highest BMI recorded is 686.9, which is significantly higher than the next highest value (41.47); it is treated as an outlier and is removed 
+
+patients_unique <- patients_unique %>%
+  filter(BMI < 100)   #removing the outlier values
+
+complete_data <- complete_data %>%
+  filter(BMI < 100)   #removing outliers from the full dataset
+
+```
+
+```{r bmi distribution}
+
+ggplot(patients_unique, aes(x = BMI)) +
+  geom_histogram(binwidth = 3, fill = "darkgreen", color = "black") +
+  labs(title = "BMI Distribution of Patients", x = "BMI", y = "Density")
+
+```
+The histogram shows that the majority of patients have a BMI between 20 and 35, which roughly corresponds to the normal and overweight ranges. There is a visible peak around 26–28, suggesting that overweight individuals form a substantial part of the dataset.
+
+<br>
+
+##### **4. Patient Race Distribution**
+
+Race is a key demographic variable that can influence health disparities, access to care, and clinical outcomes. Understanding the racial composition of the patient population helps assess the representativeness of the dataset and identify potential biases. The variable `race` is categorical so a barplot is used for visualization.
+
+```{r race distribution}
+
+ggplot(patients_unique, aes(x = race)) +   
+  geom_bar(stat = "count", fill = "darkgreen", color = "black") +
+  labs(title = "Race Distribution of Patients", x = "Race", y = "Count") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+```
+The majority of patients in the dataset identify as White, with a few individuals representing other racial groups such as Black/African American, Hispanic/Latino, and Portuguese. Several categories are sparsely populated, and some patients either declined to answer or had missing data. This indicates a lack of racial diversity in the sample, which may limit generalizability of analyses across different populations.
+
+<br> 
+
+##### **5. Summary of Patient Characteristics**
+
+This EDA of the `patients` dataset focused on key demographic variables such as `age`, `gender`, `BMI`, and `race`, as these are commonly associated with clinical outcomes, including ICU admissions, hospital length of stay, and mortality. Visualizations showed that the dataset primarily includes older adults (>30 years old), with a slightly higher proportion of male patients and mainly those identifying as White.
+
+Only `age`, `gender`, and `BMI` will be used for further analysis as these variables showed meaningful variability across the patient population. In contrast, `race` showed limited distribution, reducing its utility for deeper comparative or statistical analysis.
+
+<br>
+
+----------------------------------------------------------------------------------------------------
+
+### **Section Four: Impact of Patient Demographics on Clinical Course and Outcomes**
+
+In this section, we will analyze how the selected patient characteristics, namely age, BMI and gender, are associated with clinical outcomes such as diagnoses, medication use, hospital stay length, ICU stay length, and in-hospital mortality. This is done to see whether patient demographics have any influence on the length of stay, clinical services and patient outcomes in this dataset. Understanding such associations helps uncover patterns in healthcare utilization, identify potential disparities in outcomes, and inform clinical decision-making and policy development.
+
+<br>
+
+##### **1. Creating a Derived Variable for BMI Categories**
+
+First, BMI is categorized into standard clinical weight groups. This is done to allow for stratified comparisons, as BMI has shown to be linked with an increased risk of chronic diseases and helps guide treatment decisions. The classifications are done based on the values given by Diabetes Canada: https://www.diabetes.ca/resources/tools-resources/body-mass-index-(bmi)-calculator. Obese classification was not broken down further as the counts became too low for meaningful comparison. 
+
+```{r bmi cat}
+complete_data$BMI_Category <- ifelse(complete_data$BMI < 18.5, "Underweight",
+                                ifelse(complete_data$BMI < 25, "Normal",
+                                ifelse(complete_data$BMI < 30, "Overweight", "Obese"
+                                )))
+
+
+# Converting to ordered factor for meaningful comparison
+complete_data$BMI_Category <- factor(complete_data$BMI_Category,
+                                       levels = c("Underweight", "Normal", "Overweight", "Obese"),
+                                       ordered = TRUE)
+
+# Updating the `patients_unique` dataset
+patients_unique <- complete_data %>%
+  distinct(subject_id, .keep_all = TRUE)   
+
+# Checking the distribution
+table(patients_unique$BMI_Category)  #almost an even distribution of normal, overweight and obese patients in the dataset (but only 1 underweight patient)   
+```
+<br> 
